@@ -1,6 +1,6 @@
-# Show, Attend and Tell - Image Captioning with Visual Attention
+# [PYTORCH] Show, Attend and Tell - Neural Image Caption Generation with Visual Attention
 
-PyTorch implementation of the paper "Show, Attend and Tell: Neural Image Caption Generation with Visual Attention" by Xu et al. (2015).
+Here is my PyTorch implementation of the paper "Show, Attend and Tell: Neural Image Caption Generation with Visual Attention" by Xu et al. (2015).
 
 ## Overview
 
