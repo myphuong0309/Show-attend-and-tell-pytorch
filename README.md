@@ -166,10 +166,11 @@ python inference.py --img path/to/image.jpg --model outputs/checkpoints/BEST_che
 ## Model Architecture
 
 ### Encoder
-- Pre-trained ResNet-50 (frozen weights)
-- Removes final classification layers
-- Outputs: 14×14×2048 feature map
+- Pre-trained VGG19 (frozen weights by default)
+- Uses convolutional features (vgg19.features)
+- Outputs: 14×14×512 feature map
 - Adaptive pooling to 14×14 grid
+- Optional fine-tuning of last 4 conv layers
 
 ### Attention Mechanism
 - Soft attention over spatial image features
