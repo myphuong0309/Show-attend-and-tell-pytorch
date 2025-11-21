@@ -6,7 +6,7 @@ class Encoder(nn.Module):
     def __init__(self, encoded_image_size=14):
         super(Encoder, self).__init__()
         
-        resnet = models.resnet50(pretrained=True)  # Load a pre-trained ResNet-50 model
+        resnet = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)  # Load a pre-trained ResNet-50 model
         
         modules = list(resnet.children())[:-2]  # Remove the last two layers (avgpool and fc)
         self.resnet = nn.Sequential(*modules)
