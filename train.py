@@ -19,8 +19,8 @@ workers = 0
 fine_tune_encoder = False  # Set to True to fine-tune last 2 ResNet blocks (improves BLEU but slower)
 encoder_lr = 1e-4  # Used only if fine_tune_encoder=True
 decoder_lr = 4e-4
-epochs = 15 # Increased for better convergence
-patience = 5  # Allow more exploration before stopping
+epochs = 40 # Increased for better convergence
+patience = 10  # Allow more exploration before stopping
 alpha_c = 1.0 
 grad_clip = 5.0  
 embed_dim = 512
@@ -61,10 +61,17 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
         
         encoder_out = encoder(images)
         
-        scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(encoder_out, captions, caplens)
+        # Decoder returns (predictions, alphas) - only takes encoder_out and captions
+        # Note: Model assumes fixed-length sequences (uses captions.size(1))
+        scores, alphas = decoder(encoder_out, captions)
         
-        targets = caps_sorted[:, 1:]
+        # Targets are all words after <start>, up to <end>
+        targets = captions[:, 1:]
         
+        # Calculate decode lengths (actual lengths, not padded)
+        decode_lengths = (caplens - 1).tolist()
+        
+        # Pack sequences to handle variable lengths
         scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
         targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
         
@@ -123,8 +130,14 @@ def validate(val_loader, encoder, decoder, criterion):
             caplens = caplens.to(device)
             
             imgs = encoder(images)
-            scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(imgs, captions, caplens)
-            targets = caps_sorted[:, 1:]
+            
+            # Decoder returns (predictions, alphas) - only takes encoder_out and captions
+            scores, alphas = decoder(imgs, captions)
+            
+            targets = captions[:, 1:]
+            
+            # Calculate decode lengths
+            decode_lengths = (caplens - 1).tolist()
             
             scores_copy = scores.clone()
             scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
@@ -164,7 +177,8 @@ def main():
     if checkpoint is None:
         start_epoch = 0
         encoder = Encoder(fine_tune=fine_tune_encoder)
-        decoder = Decoder(attention_dim, embed_dim, decoder_dim, vocab_size, dropout=dropout)
+        encoder_dim = encoder.encoder_dim  # Get encoder_dim from encoder (512 for VGG19)
+        decoder = Decoder(attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=encoder_dim, dropout=dropout)
         
         # Create encoder optimizer if fine-tuning
         if fine_tune_encoder:
