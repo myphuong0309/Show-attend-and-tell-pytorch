@@ -194,24 +194,6 @@ python inference.py --img path/to/image.jpg --model outputs/checkpoints/BEST_che
 
 Example captions will be displayed here after training.
 
-## Citation
-
-```bibtex
-@article{xu2015show,
-  title={Show, attend and tell: Neural image caption generation with visual attention},
-  author={Xu, Kelvin and Ba, Jimmy and Kiros, Ryan and Cho, Kyunghyun and Courville, Aaron and Salakhudinov, Ruslan and Zemel, Rich and Bengio, Yoshua},
-  journal={International conference on machine learning},
-  pages={2048--2057},
-  year={2015}
-}
-```
-
-## License
-
-MIT License
-
-## Acknowledgments
+## References
 
 - Original paper: [Show, Attend and Tell](https://arxiv.org/abs/1502.03044)
-- Flickr8k dataset providers
-- PyTorch team for the deep learning framework
