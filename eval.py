@@ -15,11 +15,11 @@ data_folder = 'data/processed'  # folder with processed data
 checkpoint_file = 'outputs/checkpoints/BEST_checkpoint_flickr8k.pth.tar'
 word_map_file = os.path.join(data_folder, 'word2idx.json')  
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-beam_size = 3
+beam_size = 5  # Increased from 3 for better captions
 
 def evaluate(beam_size):
     print(f"Evaluating model from {checkpoint_file}")
-    checkpoint = torch.load(checkpoint_file, map_location=device)
+    checkpoint = torch.load(checkpoint_file, map_location=device, weights_only=False)
     encoder = checkpoint['encoder'].to(device)
     decoder = checkpoint['decoder'].to(device)
     encoder.eval()
@@ -54,10 +54,9 @@ def evaluate(beam_size):
             k = beam_size
             
             encoder_out = encoder(image)
-            enc_image_size = encoder_out.size(1)
-            encoder_dim = encoder_out.size(3)
-            encoder_out = encoder_out.view(1, -1, encoder_dim)
+            encoder_dim = encoder_out.size(-1)
             num_pixels = encoder_out.size(1)
+            
             encoder_out = encoder_out.expand(k, num_pixels, encoder_dim)
             
             k_prev_words = torch.LongTensor([[word_map['<start>']]] * k).to(device)
@@ -122,9 +121,24 @@ def evaluate(beam_size):
             
             references.append([img_caps])
             hypotheses.append(pred_caption)
-            
+    
+    # Calculate BLEU scores
     bleu4 = corpus_bleu(references, hypotheses)
-    print(f"\nBLEU-4 score: {bleu4:.4f}\n")
+    bleu3 = corpus_bleu(references, hypotheses, weights=(0.33, 0.33, 0.33, 0))
+    bleu2 = corpus_bleu(references, hypotheses, weights=(0.5, 0.5, 0, 0))
+    bleu1 = corpus_bleu(references, hypotheses, weights=(1, 0, 0, 0))
+    
+    print(f"\\n{'='*80}")
+    print(f"EVALUATION RESULTS")
+    print(f"{'='*80}")
+    print(f"BLEU-1: {bleu1:.4f} ({bleu1*100:.2f}%)")
+    print(f"BLEU-2: {bleu2:.4f} ({bleu2*100:.2f}%)")
+    print(f"BLEU-3: {bleu3:.4f} ({bleu3*100:.2f}%)")
+    print(f"BLEU-4: {bleu4:.4f} ({bleu4*100:.2f}%)")
+    print(f"{'='*80}")
+    print(f"\\nNote: BLEU-4 is the primary metric for image captioning.")
+    print(f"Expected BLEU-4 for Flickr8k: 0.20-0.28 (20-28%)")
+    print(f"\\n")
     
 if __name__ == '__main__':
     evaluate(beam_size)

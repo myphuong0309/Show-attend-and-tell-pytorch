@@ -3,24 +3,36 @@ import torch.nn as nn
 import torchvision.models as models
 
 class Encoder(nn.Module):
-    def __init__(self, encoded_image_size=14):
+    def __init__(self, encoded_image_size=14, fine_tune=False):
         super(Encoder, self).__init__()
         
-        resnet = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)  # Load a pre-trained ResNet-50 model
+        # Load pretrained VGG19
+        vgg19 = models.vgg19(weights=models.VGG19_Weights.IMAGENET1K_V1)
         
-        modules = list(resnet.children())[:-2]  # Remove the last two layers (avgpool and fc)
-        self.resnet = nn.Sequential(*modules)
+        # Remove classifier (only keep features)
+        # VGG19 features output is 512 channels
+        self.features = vgg19.features  
         self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
         
-        for param in self.resnet.parameters(): 
-            param.requires_grad = False  # Freeze the parameters
+        # Freeze all layers by default
+        for param in self.features.parameters():
+            param.requires_grad = False
+        
+        # Fine-tune last few conv layers if specified
+        if fine_tune:
+            # Unfreeze last 4 conv layers (from layer 28 onwards in VGG19)
+            for module in list(self.features.children())[28:]:
+                for param in module.parameters():
+                    param.requires_grad = True
+        
+        self.encoder_dim = 512  # VGG19 outputs 512 channels
             
     def forward(self, images):
-        out = self.resnet(images)
-        out = self.adaptive_pool(out)  
+        out = self.features(images)  # (batch, 512, H, W)
+        out = self.adaptive_pool(out)  # (batch, 512, 14, 14)
         
-        out = out.permute(0, 2, 3, 1)
-        out = out.view(out.size(0), -1, out.size(3))
+        out = out.permute(0, 2, 3, 1)  # (batch, 14, 14, 512)
+        out = out.view(out.size(0), -1, out.size(3))  # (batch, 196, 512)
         return out
     
 class Attention(nn.Module):
@@ -44,7 +56,7 @@ class Attention(nn.Module):
         return attention_weighted_encoding, alpha
 
 class Decoder(nn.Module):
-    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5):
+    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=512, dropout=0.5):
         super(Decoder, self).__init__()
         self.encoder_dim = encoder_dim
         self.attention_dim = attention_dim
@@ -57,18 +69,14 @@ class Decoder(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embed_dim)
         self.dropout_layer = nn.Dropout(p=self.dropout)
         
-        # LSTMCell: input là (embedding + context vector)
         self.lstm = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)
         
-        # Các lớp Linear để khởi tạo trạng thái hidden/cell state từ ảnh
         self.init_h = nn.Linear(encoder_dim, decoder_dim)
         self.init_c = nn.Linear(encoder_dim, decoder_dim)
         
-        # Cổng sigmoid (f_beta) điều chỉnh mức độ quan trọng của context vector
         self.f_beta = nn.Linear(decoder_dim, encoder_dim)
         self.sigmoid = nn.Sigmoid()
         
-        # Lớp output dự đoán từ (Linear layer)
         self.fc = nn.Linear(decoder_dim, vocab_size)
         
         self.init_weights()
@@ -89,48 +97,34 @@ class Decoder(nn.Module):
         encoder_dim = encoder_out.size(-1)
         vocab_size = self.vocab_size
         
-        # Làm phẳng ảnh: (batch, 14, 14, 2048) -> (batch, 196, 2048)
         encoder_out = encoder_out.view(batch_size, -1, encoder_dim)
         num_pixels = encoder_out.size(1)
 
-        # 1. Sắp xếp batch theo độ dài caption giảm dần (để xử lý hiệu quả)
         caption_lengths, sort_ind = caption_lengths.sort(dim=0, descending=True)
         encoder_out = encoder_out[sort_ind]
         encoded_captions = encoded_captions[sort_ind]
 
-        # 2. Tạo Embedding cho từ vựng
         embeddings = self.embedding(encoded_captions)  # (batch, max_len, embed_dim)
 
-        # 3. Khởi tạo LSTM state
         h, c = self.init_hidden_state(encoder_out)
-
-        # 4. Tạo Tensor chứa kết quả
-        # Ta sẽ dự đoán từ t=1 đến hết (bỏ qua <start>), nên độ dài là max_len - 1
+    
         decode_lengths = (caption_lengths - 1).tolist()
         predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(encoder_out.device)
         alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
 
-        # 5. Vòng lặp qua từng bước thời gian t
         for t in range(max(decode_lengths)):
-            # Tại bước t, chỉ xử lý những caption chưa kết thúc
             batch_size_t = sum([l > t for l in decode_lengths])
             
-            # Tính Attention
             attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t], h[:batch_size_t])
             
-            # Cổng Gate (Soft Attention)
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))
             attention_weighted_encoding = gate * attention_weighted_encoding
             
-            # Chạy 1 bước LSTM
-            # Input = Nối (Embedding từ t) + (Context Vector t)
             lstm_input = torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1)
             h, c = self.lstm(lstm_input, (h[:batch_size_t], c[:batch_size_t]))
             
-            # Dự đoán từ tiếp theo
             preds = self.fc(self.dropout_layer(h))  # (batch_size_t, vocab_size)
             
-            # Lưu kết quả
             predictions[:batch_size_t, t, :] = preds
             alphas[:batch_size_t, t, :] = alpha
 

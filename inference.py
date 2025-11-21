@@ -28,11 +28,9 @@ def caption_image_beam_search(encoder, decoder, image_path, word_map, beam_size=
     image = transform(img).unsqueeze(0).to(device)
 
     encoder_out = encoder(image)  
-    enc_image_size = encoder_out.size(1)
-    encoder_dim = encoder_out.size(3)
-
-    encoder_out = encoder_out.view(1, -1, encoder_dim)  
+    encoder_dim = encoder_out.size(-1)
     num_pixels = encoder_out.size(1)
+    enc_image_size = int(num_pixels ** 0.5)  # sqrt of num_pixels (e.g., 196 -> 14)
 
     encoder_out = encoder_out.expand(k, num_pixels, encoder_dim)
     
@@ -162,8 +160,36 @@ def visualize_attention(image_path, seq, alphas, rev_word_map, smooth=True):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Show, Attend and Tell - Inference')
     
-    parser.add_argument('--image', '-i', help='path to image')
+    parser.add_argument('--img', '--image', '-i', help='path to image')
     parser.add_argument('--model', '-m', help='path to model checkpoint')
     parser.add_argument('--word_map', '-wm', help='path to word map JSON file', default='data/processed/word2idx.json')
     parser.add_argument('--beam_size', '-b', type=int, default=3, help='beam size for beam search')
-        
+    parser.add_argument('--dont_smooth', dest='smooth', action='store_false', help='do not smooth alpha overlay')
+    
+    args = parser.parse_args()
+    
+    # Load word map (word2idx)
+    with open(args.word_map, 'r') as j:
+        word_map = json.load(j)
+    rev_word_map = {v: k for k, v in word_map.items()}
+    
+    # Load model
+    checkpoint = torch.load(args.model, map_location=device, weights_only=False)
+    encoder = checkpoint['encoder']
+    decoder = checkpoint['decoder']
+    encoder = encoder.to(device)
+    decoder = decoder.to(device)
+    encoder.eval()
+    decoder.eval()
+    
+    # Generate caption
+    seq, alphas = caption_image_beam_search(encoder, decoder, args.img, word_map, args.beam_size)
+    
+    # Convert indices to words
+    words = [rev_word_map[ind] for ind in seq]
+    caption = ' '.join(words)
+    
+    print(f"\nGenerated Caption: {caption}\n")
+    
+    # Visualize attention
+    visualize_attention(args.img, seq, alphas, rev_word_map, smooth=args.smooth)
