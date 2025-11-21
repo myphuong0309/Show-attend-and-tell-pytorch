@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import Dataset
 import os
 import json
+import random
 from PIL import Image
 import torchvision.transforms as transforms
 
@@ -26,8 +27,10 @@ class FlickrDataset(Dataset):
             image = self.transform(image)
         
         if self.split == 'train':
-            caption = captions[index % len(captions)]
+            # Randomly select one caption during training for data augmentation
+            caption = random.choice(captions)
         else:
+            # Use first caption for validation/test
             caption = captions[0]
             
         tokens = caption.split()

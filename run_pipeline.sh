@@ -25,7 +25,7 @@ CHECKPOINT="outputs/checkpoints/BEST_checkpoint_flickr8k.pth.tar"
 if [ -f "$CHECKPOINT" ]; then
     echo "Found existing checkpoint: $CHECKPOINT"
     echo "Resuming training or starting new? (Press Ctrl+C to stop if you don't want to train more)"
-    python train.py # Bỏ comment dòng này nếu muốn train tiếp
+    python train.py # Uncomment this line to continue training
     echo "Skipping training for this demo run (assuming model is ready)."
 else
     echo "No checkpoint found. Starting training from scratch..."

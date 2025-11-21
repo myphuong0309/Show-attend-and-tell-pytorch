@@ -5,31 +5,21 @@ import torchvision.models as models
 class Encoder(nn.Module):
     def __init__(self, encoded_image_size=14, fine_tune=False):
         super(Encoder, self).__init__()
-        
-        # Load pretrained VGG19
         vgg19 = models.vgg19(weights=models.VGG19_Weights.IMAGENET1K_V1)
-        
-        # Remove classifier (only keep features)
-        # VGG19 features output is 512 channels
         self.features = vgg19.features  
         self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
-        
-        self.encoder_dim = 512  # VGG19 outputs 512 channels
-        
+        self.encoder_dim = 512
         self.fine_tune(fine_tune)
             
     def forward(self, images):
-        out = self.features(images)  # (batch, 512, H, W)
-        out = self.adaptive_pool(out)  # (batch, 512, 14, 14)
-        
-        out = out.permute(0, 2, 3, 1)  # (batch, 14, 14, 512)
-        out = out.view(out.size(0), -1, out.size(-1))  # (batch, 196, 512)
-        return out
+        out = self.features(images) 
+        out = self.adaptive_pool(out) 
+        out = out.permute(0, 2, 3, 1) 
+        return out # (batch, 14, 14, 512)
     
     def fine_tune(self, fine_tune=True):
         for p in self.features.parameters():
             p.requires_grad = False
-            
         if fine_tune:
             for c in list(self.features.children())[28:]:
                 for p in c.parameters():
@@ -47,12 +37,9 @@ class Attention(nn.Module):
     def forward(self, encoder_out, decoder_hidden):
         att1 = self.encoder_att(encoder_out)  
         att2 = self.decoder_att(decoder_hidden)  
-        
         att = self.full_att(self.relu(att1 + att2.unsqueeze(1))).squeeze(2)  
-        
         alpha = self.softmax(att)  
         attention_weighted_encoding = (encoder_out * alpha.unsqueeze(2)).sum(dim=1)  
-        
         return attention_weighted_encoding, alpha
 
 class Decoder(nn.Module):
@@ -70,16 +57,15 @@ class Decoder(nn.Module):
         self.dropout_layer = nn.Dropout(p=self.dropout)
         
         self.lstm = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)
-        
         self.init_h = nn.Linear(encoder_dim, decoder_dim)
         self.init_c = nn.Linear(encoder_dim, decoder_dim)
-        self.tanh = nn.Tanh()
-        
         self.f_beta = nn.Linear(decoder_dim, encoder_dim)
         self.sigmoid = nn.Sigmoid()
         
-        self.fc = nn.Linear(decoder_dim, vocab_size)
+        # Add layer normalization for better training stability
+        self.layer_norm = nn.LayerNorm(decoder_dim)
         
+        self.fc = nn.Linear(decoder_dim, vocab_size)
         self.init_weights()
         
     def init_weights(self):
@@ -89,39 +75,62 @@ class Decoder(nn.Module):
         
     def init_hidden_state(self, encoder_out):
         mean_encoder_out = encoder_out.mean(dim=1)
-        h = self.tanh(self.init_h(mean_encoder_out))
-        c = self.tanh(self.init_c(mean_encoder_out))  
+        h = torch.tanh(self.init_h(mean_encoder_out))
+        c = torch.tanh(self.init_c(mean_encoder_out))  
         return h, c
     
-    def forward(self, encoder_out, captions):
-        device = encoder_out.device
+    def forward(self, encoder_out, encoded_captions, caption_lengths):
+        """
+        Đã thêm lại tham số caption_lengths để xử lý Dynamic Batching
+        """
         batch_size = encoder_out.size(0)
+        encoder_dim = encoder_out.size(-1)
+        vocab_size = self.vocab_size
         
-        if len(encoder_out.size()) == 4:
-            encoder_out = encoder_out.view(batch_size, -1, self.encoder_dim)
-        
+        # Flatten image: (batch, 14, 14, 512) -> (batch, 196, 512)
+        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)
+        num_pixels = encoder_out.size(1)
+
+        # 1. Sắp xếp batch giảm dần (QUAN TRỌNG để tối ưu hóa)
+        # Lưu ý: Dữ liệu từ DataLoader đã được sort, nhưng sort lại ở đây cho chắc chắn logic
+        caption_lengths, sort_ind = caption_lengths.sort(dim=0, descending=True)
+        encoder_out = encoder_out[sort_ind]
+        encoded_captions = encoded_captions[sort_ind]
+
+        # Embedding
+        embeddings = self.embedding(encoded_captions) # (batch, max_len, embed_dim)
+
+        # Init LSTM
         h, c = self.init_hidden_state(encoder_out)
     
-        decode_lengths = captions.size(1) - 1
-        predictions = torch.zeros(batch_size, decode_lengths, self.vocab_size).to(encoder_out.device)
-        alphas = torch.zeros(batch_size, decode_lengths, encoder_out.size(1)).to(encoder_out.device)
-        
-        embeddings = self.embedding(captions)
+        # Chuẩn bị tensors kết quả
+        # Trừ 1 vì không dự đoán <start>
+        decode_lengths = (caption_lengths - 1).tolist()
+        predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(encoder_out.device)
+        alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
 
-        for t in range(decode_lengths):
-            batch_size_t = batch_size  # All sequences in batch
+        # 2. Vòng lặp Dynamic Batching
+        for t in range(max(decode_lengths)):
+            # Tại bước t, chỉ tính cho các câu CHƯA kết thúc (bỏ qua padding)
+            # batch_size_t sẽ nhỏ dần theo thời gian
+            batch_size_t = sum([l > t for l in decode_lengths])
             
+            # Chỉ lấy phần batch còn hiệu lực
             attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t], h[:batch_size_t])
             
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))
             attention_weighted_encoding = gate * attention_weighted_encoding
             
-            lstm_input = torch.cat((embeddings[:batch_size_t, t, :], attention_weighted_encoding), dim=1)
+            # LSTM Step
+            lstm_input = torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1)
             h, c = self.lstm(lstm_input, (h[:batch_size_t], c[:batch_size_t]))
             
-            preds = self.fc(self.dropout_layer(h))  # (batch_size_t, vocab_size)
+            # Apply layer normalization before final classification
+            h_norm = self.layer_norm(h)
+            preds = self.fc(self.dropout_layer(h_norm))
             
             predictions[:batch_size_t, t, :] = preds
             alphas[:batch_size_t, t, :] = alpha
 
-        return predictions, alphas
+        # Trả về thêm encoded_captions và decode_lengths đã được sort để tính Loss bên ngoài
+        return predictions, encoded_captions, decode_lengths, alphas, sort_ind

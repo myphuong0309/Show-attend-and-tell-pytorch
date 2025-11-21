@@ -27,10 +27,14 @@ def caption_image_beam_search(encoder, decoder, image_path, word_map, beam_size=
                              std=[0.229, 0.224, 0.225])])
     image = transform(img).unsqueeze(0).to(device)
 
-    encoder_out = encoder(image)  
-    encoder_dim = encoder_out.size(-1)
-    num_pixels = encoder_out.size(1)
-    enc_image_size = int(num_pixels ** 0.5)  # sqrt of num_pixels (e.g., 196 -> 14)
+    encoder_out = encoder(image)  # (1, 14, 14, 512)
+    
+    # Flatten spatial dimensions
+    batch_size = encoder_out.size(0)
+    enc_image_size = encoder_out.size(1)  # 14 - save before flattening
+    encoder_dim = encoder_out.size(-1)  # 512
+    encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (1, 196, 512)
+    num_pixels = encoder_out.size(1)  # 196
 
     encoder_out = encoder_out.expand(k, num_pixels, encoder_dim)
     
@@ -168,6 +172,19 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
+    print("="*80)
+    print("IMAGE CAPTIONING WITH VISUAL ATTENTION - INFERENCE")
+    print("="*80)
+    print(f"\nImage: {args.img}")
+    print(f"Model: {args.model}")
+    print(f"Beam Size: {args.beam_size}")
+    
+    if not os.path.exists(args.img):
+        print(f"\nError: Image file not found: {args.img}\n")
+        exit(1)
+    
+    print("\nLoading model...")
+    
     # Load word map (word2idx)
     with open(args.word_map, 'r') as j:
         word_map = json.load(j)
@@ -182,6 +199,8 @@ if __name__ == '__main__':
     encoder.eval()
     decoder.eval()
     
+    print("Generating caption...\n")
+    
     # Generate caption
     seq, alphas = caption_image_beam_search(encoder, decoder, args.img, word_map, args.beam_size)
     
@@ -189,7 +208,13 @@ if __name__ == '__main__':
     words = [rev_word_map[ind] for ind in seq]
     caption = ' '.join(words)
     
-    print(f"\nGenerated Caption: {caption}\n")
+    print("="*80)
+    print(f"💬 GENERATED CAPTION")
+    print("="*80)
+    print(f"   {caption}")
+    print("="*80 + "\n")
     
     # Visualize attention
+    print("Creating attention visualization...")
     visualize_attention(args.img, seq, alphas, rev_word_map, smooth=args.smooth)
+    print("✓ Visualization saved!\n")

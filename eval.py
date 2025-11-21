@@ -15,15 +15,22 @@ data_folder = 'data/processed'  # folder with processed data
 checkpoint_file = 'outputs/checkpoints/BEST_checkpoint_flickr8k.pth.tar'
 word_map_file = os.path.join(data_folder, 'word2idx.json')  
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-beam_size = 5  # Increased from 3 for better captions
+beam_size = 3  # Balanced speed/quality tradeoff
 
 def evaluate(beam_size):
-    print(f"Evaluating model from {checkpoint_file}")
+    print("="*80)
+    print("MODEL EVALUATION ON TEST SET")
+    print("="*80)
+    print(f"\nLoading checkpoint: {checkpoint_file}")
+    
     checkpoint = torch.load(checkpoint_file, map_location=device, weights_only=False)
     encoder = checkpoint['encoder'].to(device)
     decoder = checkpoint['decoder'].to(device)
     encoder.eval()
     decoder.eval()
+    
+    print(f"Device: {device}")
+    print(f"Beam Size: {beam_size}\n")
     
     with open(word_map_file, 'r') as j:
         word_map = json.load(j)
@@ -53,8 +60,12 @@ def evaluate(beam_size):
             
             k = beam_size
             
-            encoder_out = encoder(image)
+            encoder_out = encoder(image)  # (1, 14, 14, 512)
+            
+            # Flatten spatial dimensions
+            batch_size = encoder_out.size(0)
             encoder_dim = encoder_out.size(-1)
+            encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (1, 196, 512)
             num_pixels = encoder_out.size(1)
             
             encoder_out = encoder_out.expand(k, num_pixels, encoder_dim)
@@ -128,13 +139,14 @@ def evaluate(beam_size):
     bleu2 = corpus_bleu(references, hypotheses, weights=(0.5, 0.5, 0, 0))
     bleu1 = corpus_bleu(references, hypotheses, weights=(1, 0, 0, 0))
     
-    print(f"\\n{'='*80}")
+    print(f"\n{'='*80}")
     print(f"EVALUATION RESULTS")
     print(f"{'='*80}")
-    print(f"BLEU-1: {bleu1:.4f} ({bleu1*100:.2f}%)")
-    print(f"BLEU-2: {bleu2:.4f} ({bleu2*100:.2f}%)")
-    print(f"BLEU-3: {bleu3:.4f} ({bleu3*100:.2f}%)")
-    print(f"BLEU-4: {bleu4:.4f} ({bleu4*100:.2f}%)")
+    print(f"   BLEU-1: {bleu1:.4f} ({bleu1*100:6.2f}%)")
+    print(f"   BLEU-2: {bleu2:.4f} ({bleu2*100:6.2f}%)")
+    print(f"   BLEU-3: {bleu3:.4f} ({bleu3*100:6.2f}%)")
+    print(f"   BLEU-4: {bleu4:.4f} ({bleu4*100:6.2f}%) ← Primary Metric")
+    print(f"{'='*80}\n")
     print(f"{'='*80}")
     print(f"\\nNote: BLEU-4 is the primary metric for image captioning.")
     print(f"Expected BLEU-4 for Flickr8k: 0.20-0.28 (20-28%)")
