@@ -56,7 +56,7 @@ def load_captions(captions_file):
     
     return mapping
 
-def build_vocab(captions_mapping, min_word_freq=5):
+def build_vocab(captions_mapping, min_word_freq=3):
     '''
     Build vocabulary from captions mapping
     Returns a word2idx dictionary
@@ -67,6 +67,7 @@ def build_vocab(captions_mapping, min_word_freq=5):
             word_counts.update(caption.split())
     
     # Filter words by minimum frequency (excluding special tokens)
+    # Using freq=3 for Flickr8k (small dataset) to avoid too many <unk> tokens
     vocab = [w for w, c in word_counts.items() if c >= min_word_freq and w not in ['<start>', '<end>', '<pad>', '<unk>']]
     
     # Build word2idx with special tokens first
@@ -155,7 +156,7 @@ def main():
     print(f"Total captions: {total_captions}")
     print(f"Average captions per image: {total_captions/len(captions_mapping):.1f}")
     
-    word2idx = build_vocab(captions_mapping, min_word_freq=5)
+    word2idx = build_vocab(captions_mapping, min_word_freq=3)
     with open(os.path.join(OUTPUT_FOLDER, 'word2idx.json'), 'w') as f:
         json.dump(word2idx, f, indent=2)
     print(f"\nVocabulary saved to {OUTPUT_FOLDER}/word2idx.json")

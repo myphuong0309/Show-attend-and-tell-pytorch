@@ -32,7 +32,12 @@ class Attention(nn.Module):
         self.decoder_att = nn.Linear(decoder_dim, attention_dim)  
         self.full_att = nn.Linear(attention_dim, 1)  
         self.relu = nn.ReLU()
-        self.softmax = nn.Softmax(dim=1)  
+        self.softmax = nn.Softmax(dim=1)
+        
+        # Initialize with Xavier for better gradient flow
+        nn.init.xavier_uniform_(self.encoder_att.weight)
+        nn.init.xavier_uniform_(self.decoder_att.weight)
+        nn.init.xavier_uniform_(self.full_att.weight)  
         
     def forward(self, encoder_out, decoder_hidden):
         att1 = self.encoder_att(encoder_out)  
@@ -69,9 +74,15 @@ class Decoder(nn.Module):
         self.init_weights()
         
     def init_weights(self):
+        """Initialize embedding and output layer with careful initialization"""
         self.embedding.weight.data.uniform_(-0.1, 0.1)
         self.fc.bias.data.fill_(0)
-        self.fc.weight.data.uniform_(-0.1, 0.1) 
+        self.fc.weight.data.uniform_(-0.1, 0.1)
+        
+        # Initialize LSTM transformation layers with Xavier
+        nn.init.xavier_uniform_(self.init_h.weight)
+        nn.init.xavier_uniform_(self.init_c.weight)
+        nn.init.xavier_uniform_(self.f_beta.weight) 
         
     def init_hidden_state(self, encoder_out):
         mean_encoder_out = encoder_out.mean(dim=1)

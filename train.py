@@ -154,8 +154,8 @@ def main():
         encoder_dim = encoder.encoder_dim 
         decoder = Decoder(attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=encoder_dim, dropout=dropout)
         
-        encoder_optimizer = optim.Adam(params=filter(lambda p: p.requires_grad, encoder.parameters()), lr=encoder_lr) if fine_tune_encoder else None
-        decoder_optimizer = optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()), lr=decoder_lr)
+        encoder_optimizer = optim.Adam(params=filter(lambda p: p.requires_grad, encoder.parameters()), lr=encoder_lr, weight_decay=1e-5) if fine_tune_encoder else None
+        decoder_optimizer = optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()), lr=decoder_lr, weight_decay=1e-5)
         
     else:
         print(f"Loading checkpoint from {checkpoint}...")
@@ -168,7 +168,9 @@ def main():
         
     encoder = encoder.to(device)
     decoder = decoder.to(device)
-    criterion = nn.CrossEntropyLoss().to(device)
+    # Ignore padding tokens (index 0) when computing loss
+    # Add label smoothing (0.1) to prevent overconfidence and improve generalization
+    criterion = nn.CrossEntropyLoss(ignore_index=word2idx['<pad>'], label_smoothing=0.1).to(device)
     
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     
