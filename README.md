@@ -11,12 +11,12 @@ This project implements an encoder-decoder architecture with attention mechanism
 
 ## Features
 
-- ✅ End-to-end training pipeline
-- ✅ Beam search for better caption generation
-- ✅ Attention visualization
-- ✅ Early stopping with patience
-- ✅ BLEU-4 score evaluation
-- ✅ Automated pipeline script
+- End-to-end training pipeline
+- Beam search for better caption generation
+- Attention visualization
+- Early stopping with patience
+- BLEU-4 score evaluation
+- Automated pipeline script
 
 ## Project Structure
 
