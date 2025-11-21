@@ -82,8 +82,7 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
         start = time.time()
         
         if i % 50 == 0:
-            progress = (i / len(train_loader)) * 100
-            print(f'   Epoch {epoch:2d} [{i:4d}/{len(train_loader)}] ({progress:5.1f}%) | '
+            print(f'   Epoch {epoch:2d} [{i:4d}/{len(train_loader)}] | '
                   f'Loss: {losses.val:.4f} (avg: {losses.avg:.4f}) | '
                   f'Top-5: {top5accs.val:5.1f}% (avg: {top5accs.avg:5.1f}%) | '
                   f'Time: {batch_time.val:.2f}s')
