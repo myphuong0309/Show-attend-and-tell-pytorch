@@ -1,6 +1,4 @@
 import torch.backends.cudnn as cudnn
-import torch.optim
-import torch.utils.data
 import torchvision.transforms as transforms
 from src.dataset import FlickrDataset
 from src.utils import *
@@ -8,11 +6,9 @@ from nltk.translate.bleu_score import corpus_bleu
 import torch.nn.functional as F
 from tqdm import tqdm
 import json
-import os
 import argparse
 
 def evaluate(args):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     print("="*80)
@@ -46,7 +42,7 @@ def evaluate(args):
         shuffle=False,
         num_workers=0,
         pin_memory=True)
-
+    
     references = list()
     hypotheses = list()
     
@@ -56,13 +52,10 @@ def evaluate(args):
             image = image.to(device)
             
             k = args.beam_size
-            
-            encoder_out = encoder(image)  # (1, 14, 14, 512)
-            
-            # Flatten spatial dimensions
+            encoder_out = encoder(image)  
             batch_size = encoder_out.size(0)
             encoder_dim = encoder_out.size(-1)
-            encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (1, 196, 512)
+            encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  
             num_pixels = encoder_out.size(1)
             
             encoder_out = encoder_out.expand(k, num_pixels, encoder_dim)
@@ -84,7 +77,6 @@ def evaluate(args):
                 
                 h, c = decoder.lstm(torch.cat([embeddings, awe], dim=1), (h, c))
                 
-                # Match the decoder's deeper output architecture
                 h_norm = decoder.layer_norm1(h)
                 out = decoder.fc1(h_norm)
                 out = decoder.layer_norm2(out)
@@ -97,7 +89,7 @@ def evaluate(args):
                     top_k_scores, top_k_words = scores[0].topk(k, 0, True, True)
                 else:
                     top_k_scores, top_k_words = scores.view(-1).topk(k, 0, True, True)
-                
+                    
                 prev_word_inds = top_k_words // vocab_size
                 next_word_inds = top_k_words % vocab_size
                 
@@ -109,7 +101,7 @@ def evaluate(args):
                 if len(complete_inds) > 0:
                     complete_seqs.extend(seqs[complete_inds].tolist())
                     complete_seqs_scores.extend(top_k_scores[complete_inds].tolist())
-                
+                    
                 k -= len(complete_inds)
                 if k == 0: break
                 
@@ -122,7 +114,7 @@ def evaluate(args):
                 
                 if step > 50: break
                 step += 1
-            
+                
             if len(complete_seqs_scores) > 0:
                 i = complete_seqs_scores.index(max(complete_seqs_scores))
                 seq = complete_seqs[i]
@@ -135,8 +127,7 @@ def evaluate(args):
             
             references.append([img_caps])
             hypotheses.append(pred_caption)
-    
-    # Calculate BLEU scores
+            
     bleu4 = corpus_bleu(references, hypotheses)
     bleu3 = corpus_bleu(references, hypotheses, weights=(0.33, 0.33, 0.33, 0))
     bleu2 = corpus_bleu(references, hypotheses, weights=(0.5, 0.5, 0, 0))
@@ -150,9 +141,6 @@ def evaluate(args):
     print(f"   BLEU-3: {bleu3:.4f} ({bleu3*100:6.2f}%)")
     print(f"   BLEU-4: {bleu4:.4f} ({bleu4*100:6.2f}%) ← Primary Metric")
     print(f"{'='*80}\n")
-    print(f"{'='*80}")
-    print(f"\\nNote: BLEU-4 is the primary metric for image captioning.")
-    print(f"Expected BLEU-4 for Flickr8k: 0.20-0.28 (20-28%)")
     print(f"\\n")
     
 if __name__ == '__main__':

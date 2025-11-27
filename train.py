@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.utils.data 
 import torchvision.transforms as transforms
 from torch.nn.utils.rnn import pack_padded_sequence
 from src.model import Encoder, Decoder 
@@ -29,10 +28,8 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
         
         encoder_out = encoder(images)
         
-        # Decoder forward returns (predictions, encoded_captions, decode_lengths, alphas, sort_ind)
         scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(encoder_out, captions, caplens)
         
-        # Targets are sorted captions without <start> token
         targets = caps_sorted[:, 1:]
         scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
         targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
@@ -85,7 +82,6 @@ def validate(val_loader, encoder, decoder, criterion, alpha_c, device):
             
             imgs = encoder(images)
             
-            # Decoder forward returns (predictions, encoded_captions, decode_lengths, alphas, sort_ind)
             scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(imgs, captions, caplens)
             
             targets = caps_sorted[:, 1:]
@@ -116,7 +112,7 @@ def main(args):
         word2idx = json.load(f)
     vocab_size = len(word2idx)
     
-    print(f"\n📊 CONFIGURATION:")
+    print(f"\nCONFIGURATION:")
     print(f"   Device: {device}")
     print(f"   Vocabulary Size: {vocab_size}")
     print(f"   Batch Size: {args.batch_size}")
@@ -128,7 +124,7 @@ def main(args):
     print(f"   Dropout: {args.dropout}")
     print(f"   Alpha C: {args.alpha_c}")
     print(f"   Grad Clip: {args.grad_clip}")
-
+    
     if args.checkpoint is None:
         start_epoch = 0
         encoder = Encoder(fine_tune=args.fine_tune_encoder)
@@ -141,7 +137,6 @@ def main(args):
                                       lr=args.encoder_lr, weight_decay=1e-5) if args.fine_tune_encoder else None
         decoder_optimizer = optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()), 
                                       lr=args.decoder_lr, weight_decay=1e-5)
-        
     else:
         print(f"Loading checkpoint from {args.checkpoint}...")
         checkpoint_data = torch.load(args.checkpoint, map_location=device, weights_only=False) 
@@ -153,13 +148,12 @@ def main(args):
         
     encoder = encoder.to(device)
     decoder = decoder.to(device)
-    # Add label smoothing to prevent overconfidence
+    
     criterion = nn.CrossEntropyLoss(ignore_index=word2idx['<pad>'], label_smoothing=0.1).to(device)
     
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    
-    # Enhanced data augmentation for better generalization
-    train_dataset = FlickrDataset(args.data_folder, 'train', word2idx, transform=transforms.Compose([
+    train_dataset = FlickrDataset(
+        args.data_folder, 'train', word2idx, transform=transforms.Compose([
         transforms.Resize(256),
         transforms.RandomCrop(224),
         transforms.RandomHorizontalFlip(p=0.5),
@@ -168,15 +162,28 @@ def main(args):
         transforms.ToTensor(),
         normalize
     ]))
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, 
-                                               num_workers=args.workers, pin_memory=True, 
-                                               collate_fn=CaptionCollate(pad_idx=word2idx['<pad>']))
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=True, 
+        num_workers=args.workers, 
+        pin_memory=True, 
+        collate_fn=CaptionCollate(pad_idx=word2idx['<pad>']))
     
-    val_dataset = FlickrDataset(args.data_folder, 'val', word2idx, transform=transforms.Compose([
-        transforms.Resize((256, 256)), transforms.CenterCrop(224), transforms.ToTensor(), normalize]))
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, 
-                                             num_workers=args.workers, pin_memory=True, 
-                                             collate_fn=CaptionCollate(pad_idx=word2idx['<pad>']))
+    val_dataset = FlickrDataset(
+        args.data_folder, 'val', word2idx, 
+        transform=transforms.Compose([
+            transforms.Resize((256, 256)), 
+            transforms.CenterCrop(224), 
+            transforms.ToTensor(), 
+            normalize]))
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=False, 
+        num_workers=args.workers, 
+        pin_memory=True, 
+        collate_fn=CaptionCollate(pad_idx=word2idx['<pad>']))
     
     print("\n" + "="*80)
     print("TRAINING START")
@@ -185,7 +192,6 @@ def main(args):
     best_acc = 0.0
     epochs_since_improvement = 0
     
-    # Use both ReduceLROnPlateau and Cosine Annealing for better convergence
     scheduler_plateau = optim.lr_scheduler.ReduceLROnPlateau(decoder_optimizer, mode='max', factor=0.5, patience=3)
     scheduler_cosine = optim.lr_scheduler.CosineAnnealingWarmRestarts(decoder_optimizer, T_0=10, T_mult=2)
     
@@ -199,21 +205,22 @@ def main(args):
         print(f"\n{'─'*80}")
         print(f"EPOCH {epoch}/{args.epochs-1} (Best Acc: {best_acc:.2f}%, No Improvement: {epochs_since_improvement}/{args.patience})")
         print(f"{'─'*80}")
-        
+        if epoch >= 5:
+            ss_prob = min(0.5, (epoch - 5) * 0.025)
+            decoder.set_ss_prob(ss_prob)
+            print(f"   Scheduled Sampling Probability: {ss_prob:.3f}")
         train_loss, train_acc = train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_optimizer, epoch, args.alpha_c, args.grad_clip, device)
         current_val_acc = validate(val_loader, encoder, decoder, criterion, args.alpha_c, device)
         
-        # Get current learning rate
         current_lr = decoder_optimizer.param_groups[0]['lr']
         
-        # Step schedulers
         scheduler_plateau.step(current_val_acc)
         scheduler_cosine.step(epoch)
         new_lr = decoder_optimizer.param_groups[0]['lr']
         
         if new_lr < current_lr:
             print(f"   Learning rate reduced: {current_lr:.2e} → {new_lr:.2e}")
-        
+            
         is_best = current_val_acc > best_acc
         if is_best:
             improvement = current_val_acc - best_acc
@@ -223,13 +230,13 @@ def main(args):
         else:
             epochs_since_improvement += 1
             print(f"   No improvement (Best: {best_acc:.2f}%)")
-        
+            
         save_checkpoint('flickr8k', epoch, epochs_since_improvement, encoder, decoder, encoder_optimizer, decoder_optimizer, 0, is_best)
-    
+        
     print("\n" + "="*80)
     print(f"TRAINING COMPLETE - Best Validation Acc: {best_acc:.2f}%")
     print("="*80)
-
+    
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train Image Captioning Model')
     parser.add_argument('--data_folder', default='data/processed', help='Folder with processed data')

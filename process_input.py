@@ -6,17 +6,12 @@ import string
 import random
 import argparse
 
-# Set random seed for reproducible train/val/test splits
 random.seed(42)
-    
+
 def load_captions(captions_file):
-    '''
-    Read file captions.txt (image, caption)
-    Returns a dictionary mapping image IDs to lists of captions. {image_id: [list_captions]}
-    '''
     with open(captions_file, 'r') as f:
         lines = f.readlines()
-    
+        
     mapping = dict()
     
     start_index = 0
@@ -45,8 +40,9 @@ def load_captions(captions_file):
         
         if image_id not in mapping:
             mapping[image_id] = []
+        
         mapping[image_id].append(final_caption)
-    
+        
     return mapping
 
 def build_vocab(captions_mapping, min_word_freq=3):
@@ -58,22 +54,18 @@ def build_vocab(captions_mapping, min_word_freq=3):
     for image_id in captions_mapping:
         for caption in captions_mapping[image_id]:
             word_counts.update(caption.split())
-    
-    # Filter words by minimum frequency (excluding special tokens)
-    # Using freq=3 for Flickr8k (small dataset) to avoid too many <unk> tokens
+            
     vocab = [w for w, c in word_counts.items() if c >= min_word_freq and w not in ['<start>', '<end>', '<pad>', '<unk>']]
     
-    # Build word2idx with special tokens first
     word2idx = {}
     word2idx['<pad>'] = 0
     word2idx['<start>'] = 1
     word2idx['<end>'] = 2
     word2idx['<unk>'] = 3
     
-    # Add regular vocabulary
     for idx, word in enumerate(vocab):
         word2idx[word] = idx + 4
-    
+        
     print(f"Total vocabulary size: {len(word2idx)}")
     print(f"Special tokens: <pad>=0, <start>=1, <end>=2, <unk>=3")
     print(f"Regular words: {len(vocab)} (min frequency: {min_word_freq})")
@@ -81,10 +73,6 @@ def build_vocab(captions_mapping, min_word_freq=3):
     return word2idx
 
 def split_dataset(captions_mapping, train_ratio=0.8, val_ratio=0.1):
-    '''
-    Split dataset into train, val, test sets
-    Returns three dictionaries for each split
-    '''
     all_images = list(captions_mapping.keys())
     random.shuffle(all_images)
     
@@ -106,6 +94,7 @@ def split_dataset(captions_mapping, train_ratio=0.8, val_ratio=0.1):
 def save_dataset(split_name, image_ids, captions_mapping, output_folder, images_folder):
     data = []
     missing_count = 0
+    
     for img_id in image_ids:
         img_path = os.path.join(images_folder, img_id)
         if os.path.exists(img_path):
@@ -115,15 +104,15 @@ def save_dataset(split_name, image_ids, captions_mapping, output_folder, images_
             })
         else:
             missing_count += 1
-    
+            
     output_file = os.path.join(output_folder, f'{split_name}_data.json')
     with open(output_file, 'w') as f:
         json.dump(data, f, indent=2)
-    
+        
     print(f"  {split_name}: Saved {len(data)} entries")
     if missing_count > 0:
         print(f"    Warning: {missing_count} images not found")
-    
+        
 def main(args):
     print("="*80)
     print("DATA PREPROCESSING")
@@ -147,7 +136,6 @@ def main(args):
         print("ERROR: No captions loaded. Check your captions.txt file format.")
         return
     
-    # Count total captions
     total_captions = sum(len(caps) for caps in captions_mapping.values())
     print(f"Total captions: {total_captions}")
     print(f"Average captions per image: {total_captions/len(captions_mapping):.1f}")
@@ -156,7 +144,7 @@ def main(args):
     with open(os.path.join(args.output_folder, 'word2idx.json'), 'w') as f:
         json.dump(word2idx, f, indent=2)
     print(f"\nVocabulary saved to {args.output_folder}/word2idx.json")
-        
+    
     splits = split_dataset(captions_mapping, args.train_ratio, args.val_ratio)
     
     print(f"\\nSaving datasets...")
@@ -180,6 +168,5 @@ if __name__ == '__main__':
     
     if not os.path.exists(args.output_folder):
         os.makedirs(args.output_folder)
-    
+        
     main(args)
-    
