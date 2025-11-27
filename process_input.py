@@ -4,17 +4,10 @@ from collections import Counter
 from tqdm import tqdm
 import string
 import random
+import argparse
 
 # Set random seed for reproducible train/val/test splits
 random.seed(42)
-
-DATA_FOLDER = 'data'
-IMAGES_FOLDER = os.path.join(DATA_FOLDER, 'images')
-CAPTIONS_FILE = os.path.join(DATA_FOLDER, 'captions.txt')
-OUTPUT_FOLDER = 'data/processed'
-
-if not os.path.exists(OUTPUT_FOLDER):
-    os.makedirs(OUTPUT_FOLDER)
     
 def load_captions(captions_file):
     '''
@@ -110,11 +103,11 @@ def split_dataset(captions_mapping, train_ratio=0.8, val_ratio=0.1):
     
     return {'train': train_images, 'val': val_images, 'test': test_images}
 
-def save_dataset(split_name, image_ids, captions_mapping):
+def save_dataset(split_name, image_ids, captions_mapping, output_folder, images_folder):
     data = []
     missing_count = 0
     for img_id in image_ids:
-        img_path = os.path.join(IMAGES_FOLDER, img_id)
+        img_path = os.path.join(images_folder, img_id)
         if os.path.exists(img_path):
             data.append({
                 'image_path': img_path,
@@ -123,7 +116,7 @@ def save_dataset(split_name, image_ids, captions_mapping):
         else:
             missing_count += 1
     
-    output_file = os.path.join(OUTPUT_FOLDER, f'{split_name}_data.json')
+    output_file = os.path.join(output_folder, f'{split_name}_data.json')
     with open(output_file, 'w') as f:
         json.dump(data, f, indent=2)
     
@@ -131,20 +124,23 @@ def save_dataset(split_name, image_ids, captions_mapping):
     if missing_count > 0:
         print(f"    Warning: {missing_count} images not found")
     
-def main():
+def main(args):
     print("="*80)
     print("DATA PREPROCESSING")
     print("="*80)
     
-    if not os.path.exists(CAPTIONS_FILE):
-        print(f"ERROR: Captions file '{CAPTIONS_FILE}' not found!")
+    captions_file = os.path.join(args.data_folder, 'captions.txt')
+    images_folder = os.path.join(args.data_folder, 'images')
+    
+    if not os.path.exists(captions_file):
+        print(f"ERROR: Captions file '{captions_file}' not found!")
         return
     
-    if not os.path.exists(IMAGES_FOLDER):
-        print(f"ERROR: Images folder '{IMAGES_FOLDER}' not found!")
+    if not os.path.exists(images_folder):
+        print(f"ERROR: Images folder '{images_folder}' not found!")
         return
     
-    captions_mapping = load_captions(CAPTIONS_FILE)
+    captions_mapping = load_captions(captions_file)
     print(f"\nLoaded captions for {len(captions_mapping)} images.")
     
     if len(captions_mapping) == 0:
@@ -156,22 +152,34 @@ def main():
     print(f"Total captions: {total_captions}")
     print(f"Average captions per image: {total_captions/len(captions_mapping):.1f}")
     
-    word2idx = build_vocab(captions_mapping, min_word_freq=3)
-    with open(os.path.join(OUTPUT_FOLDER, 'word2idx.json'), 'w') as f:
+    word2idx = build_vocab(captions_mapping, args.min_word_freq)
+    with open(os.path.join(args.output_folder, 'word2idx.json'), 'w') as f:
         json.dump(word2idx, f, indent=2)
-    print(f"\nVocabulary saved to {OUTPUT_FOLDER}/word2idx.json")
+    print(f"\nVocabulary saved to {args.output_folder}/word2idx.json")
         
-    splits = split_dataset(captions_mapping)
+    splits = split_dataset(captions_mapping, args.train_ratio, args.val_ratio)
     
-    print(f"\nSaving datasets...")
-    save_dataset('train', splits['train'], captions_mapping)
-    save_dataset('val', splits['val'], captions_mapping)
-    save_dataset('test', splits['test'], captions_mapping)
+    print(f"\\nSaving datasets...")
+    save_dataset('train', splits['train'], captions_mapping, args.output_folder, images_folder)
+    save_dataset('val', splits['val'], captions_mapping, args.output_folder, images_folder)
+    save_dataset('test', splits['test'], captions_mapping, args.output_folder, images_folder)
     
     print("\n" + "="*80)
     print("DATA PROCESSING COMPLETED SUCCESSFULLY!")
     print("="*80)
     
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='Process Flickr8k Dataset')
+    parser.add_argument('--data_folder', default='data', help='Folder with raw data')
+    parser.add_argument('--output_folder', default='data/processed', help='Folder to save processed data')
+    parser.add_argument('--min_word_freq', type=int, default=3, help='Minimum word frequency for vocabulary')
+    parser.add_argument('--train_ratio', type=float, default=0.8, help='Train split ratio')
+    parser.add_argument('--val_ratio', type=float, default=0.1, help='Validation split ratio')
+    
+    args = parser.parse_args()
+    
+    if not os.path.exists(args.output_folder):
+        os.makedirs(args.output_folder)
+    
+    main(args)
     

@@ -10,28 +10,9 @@ from src.utils import *
 import json
 import os
 import time
+import argparse
 
-## Configuration
-data_folder = 'data/processed'
-checkpoint = None # 'outputs/checkpoints/checkpoint_flickr8k.pth.tar'
-batch_size = 32
-workers = 4 # Để 0 nếu chạy trên Windows
-fine_tune_encoder = False 
-encoder_lr = 1e-4
-decoder_lr = 1e-4  # Reduced from 4e-4 for more stable training
-epochs = 40
-patience = 10  
-alpha_c = 1.0 
-grad_clip = 5.0  
-embed_dim = 512
-attention_dim = 512
-decoder_dim = 512
-dropout = 0.5
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# ... (Phần print config giữ nguyên) ...
-
-def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_optimizer, epoch):
+def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_optimizer, epoch, alpha_c, grad_clip, device):
     encoder.train()
     decoder.train()
     
@@ -48,13 +29,11 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
         
         encoder_out = encoder(images)
         
-        # --- SỬA LẠI: Truyền thêm caplens ---
+        # Decoder forward returns (predictions, encoded_captions, decode_lengths, alphas, sort_ind)
         scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(encoder_out, captions, caplens)
         
-        # Targets là caption đã sort, bỏ từ <start>
+        # Targets are sorted captions without <start> token
         targets = caps_sorted[:, 1:]
-        
-        # Pack sequences (dùng decode_lengths trả về từ decoder cho an toàn)
         scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
         targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
         
@@ -90,7 +69,7 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
     print(f'\n   Epoch {epoch} Complete - Loss: {losses.avg:.4f} | Top-5 Acc: {top5accs.avg:.2f}%\n')
     return losses.avg, top5accs.avg
 
-def validate(val_loader, encoder, decoder, criterion):
+def validate(val_loader, encoder, decoder, criterion, alpha_c, device):
     decoder.eval()
     if encoder is not None:
         encoder.eval()
@@ -106,7 +85,7 @@ def validate(val_loader, encoder, decoder, criterion):
             
             imgs = encoder(images)
             
-            # --- SỬA LẠI: Truyền thêm caplens ---
+            # Decoder forward returns (predictions, encoded_captions, decode_lengths, alphas, sort_ind)
             scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(imgs, captions, caplens)
             
             targets = caps_sorted[:, 1:]
@@ -123,14 +102,16 @@ def validate(val_loader, encoder, decoder, criterion):
     print(f"   VALIDATION: Loss: {losses.avg:.4f} | Top-5 Acc: {top5accs.avg:.2f}%")
     return top5accs.avg
 
-def main():
+def main(args):
     global start_epoch, word2idx
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     print("="*80)
     print("IMAGE CAPTIONING WITH VISUAL ATTENTION - TRAINING")
     print("="*80)
     
-    word2idx_file = os.path.join(data_folder, 'word2idx.json')
+    word2idx_file = os.path.join(args.data_folder, 'word2idx.json')
     with open(word2idx_file, 'r') as f:
         word2idx = json.load(f)
     vocab_size = len(word2idx)
@@ -138,27 +119,32 @@ def main():
     print(f"\n📊 CONFIGURATION:")
     print(f"   Device: {device}")
     print(f"   Vocabulary Size: {vocab_size}")
-    print(f"   Batch Size: {batch_size}")
-    print(f"   Epochs: {epochs} (patience: {patience})")
-    print(f"   Encoder: VGG19 (frozen={not fine_tune_encoder})")
-    print(f"   Decoder LR: {decoder_lr}")
-    print(f"   Embed/Attention/Decoder Dim: {embed_dim}/{attention_dim}/{decoder_dim}")
-    print(f"   Dropout: {dropout}")
-    print(f"   Alpha C: {alpha_c}")
-    print(f"   Grad Clip: {grad_clip}")
+    print(f"   Batch Size: {args.batch_size}")
+    print(f"   Epochs: {args.epochs} (patience: {args.patience})")
+    print(f"   Encoder Fine-tune: {args.fine_tune_encoder}")
+    print(f"   Encoder LR: {args.encoder_lr}")
+    print(f"   Decoder LR: {args.decoder_lr}")
+    print(f"   Embed/Attention/Decoder Dim: {args.embed_dim}/{args.attention_dim}/{args.decoder_dim}")
+    print(f"   Dropout: {args.dropout}")
+    print(f"   Alpha C: {args.alpha_c}")
+    print(f"   Grad Clip: {args.grad_clip}")
 
-    if checkpoint is None:
+    if args.checkpoint is None:
         start_epoch = 0
-        encoder = Encoder(fine_tune=fine_tune_encoder)
-        encoder_dim = encoder.encoder_dim 
-        decoder = Decoder(attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=encoder_dim, dropout=dropout)
+        encoder = Encoder(fine_tune=args.fine_tune_encoder)
+        encoder_dim = encoder.encoder_dim
+        decoder = Decoder(attention_dim=args.attention_dim, embed_dim=args.embed_dim, 
+                         decoder_dim=args.decoder_dim, vocab_size=vocab_size, 
+                         encoder_dim=encoder_dim, dropout=args.dropout)
         
-        encoder_optimizer = optim.Adam(params=filter(lambda p: p.requires_grad, encoder.parameters()), lr=encoder_lr, weight_decay=1e-5) if fine_tune_encoder else None
-        decoder_optimizer = optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()), lr=decoder_lr, weight_decay=1e-5)
+        encoder_optimizer = optim.Adam(params=filter(lambda p: p.requires_grad, encoder.parameters()), 
+                                      lr=args.encoder_lr, weight_decay=1e-5) if args.fine_tune_encoder else None
+        decoder_optimizer = optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()), 
+                                      lr=args.decoder_lr, weight_decay=1e-5)
         
     else:
-        print(f"Loading checkpoint from {checkpoint}...")
-        checkpoint_data = torch.load(checkpoint, map_location=device, weights_only=False) 
+        print(f"Loading checkpoint from {args.checkpoint}...")
+        checkpoint_data = torch.load(args.checkpoint, map_location=device, weights_only=False) 
         start_epoch = checkpoint_data['epoch'] + 1
         encoder = checkpoint_data['encoder']
         decoder = checkpoint_data['decoder']
@@ -167,20 +153,30 @@ def main():
         
     encoder = encoder.to(device)
     decoder = decoder.to(device)
-    # Ignore padding tokens (index 0) when computing loss
-    # Add label smoothing (0.1) to prevent overconfidence and improve generalization
+    # Add label smoothing to prevent overconfidence
     criterion = nn.CrossEntropyLoss(ignore_index=word2idx['<pad>'], label_smoothing=0.1).to(device)
     
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     
-    # ... (Phần DataLoader giữ nguyên) ...
-    train_dataset = FlickrDataset(data_folder, 'train', word2idx, transform=transforms.Compose([
-        transforms.Resize((256, 256)), transforms.RandomCrop(224), transforms.RandomHorizontalFlip(), transforms.ToTensor(), normalize]))
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=True, collate_fn=CaptionCollate(pad_idx=word2idx['<pad>']))
+    # Enhanced data augmentation for better generalization
+    train_dataset = FlickrDataset(args.data_folder, 'train', word2idx, transform=transforms.Compose([
+        transforms.Resize(256),
+        transforms.RandomCrop(224),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+        transforms.RandomRotation(degrees=5),
+        transforms.ToTensor(),
+        normalize
+    ]))
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, 
+                                               num_workers=args.workers, pin_memory=True, 
+                                               collate_fn=CaptionCollate(pad_idx=word2idx['<pad>']))
     
-    val_dataset = FlickrDataset(data_folder, 'val', word2idx, transform=transforms.Compose([
+    val_dataset = FlickrDataset(args.data_folder, 'val', word2idx, transform=transforms.Compose([
         transforms.Resize((256, 256)), transforms.CenterCrop(224), transforms.ToTensor(), normalize]))
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=True, collate_fn=CaptionCollate(pad_idx=word2idx['<pad>']))
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, 
+                                             num_workers=args.workers, pin_memory=True, 
+                                             collate_fn=CaptionCollate(pad_idx=word2idx['<pad>']))
     
     print("\n" + "="*80)
     print("TRAINING START")
@@ -188,27 +184,31 @@ def main():
     
     best_acc = 0.0
     epochs_since_improvement = 0
-    # Scheduler: reduce LR if no improvement after 5 epochs (increased from 3)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(decoder_optimizer, mode='max', factor=0.5, patience=5)
     
-    for epoch in range(start_epoch, epochs):
-        if epochs_since_improvement >= patience:
+    # Use both ReduceLROnPlateau and Cosine Annealing for better convergence
+    scheduler_plateau = optim.lr_scheduler.ReduceLROnPlateau(decoder_optimizer, mode='max', factor=0.5, patience=3)
+    scheduler_cosine = optim.lr_scheduler.CosineAnnealingWarmRestarts(decoder_optimizer, T_0=10, T_mult=2)
+    
+    for epoch in range(start_epoch, args.epochs):
+        if epochs_since_improvement >= args.patience:
             print("\n" + "="*80)
-            print(f"⚠️  EARLY STOPPING after {epoch} epochs (no improvement for {patience} epochs)")
+            print(f"⚠️  EARLY STOPPING after {epoch} epochs (no improvement for {args.patience} epochs)")
             print("="*80)
             break
         
         print(f"\n{'─'*80}")
-        print(f"EPOCH {epoch}/{epochs-1} (Best Acc: {best_acc:.2f}%, No Improvement: {epochs_since_improvement}/{patience})")
+        print(f"EPOCH {epoch}/{args.epochs-1} (Best Acc: {best_acc:.2f}%, No Improvement: {epochs_since_improvement}/{args.patience})")
         print(f"{'─'*80}")
         
-        train_loss, train_acc = train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_optimizer, epoch)
-        current_val_acc = validate(val_loader, encoder, decoder, criterion)
+        train_loss, train_acc = train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_optimizer, epoch, args.alpha_c, args.grad_clip, device)
+        current_val_acc = validate(val_loader, encoder, decoder, criterion, args.alpha_c, device)
         
         # Get current learning rate
         current_lr = decoder_optimizer.param_groups[0]['lr']
         
-        scheduler.step(current_val_acc)
+        # Step schedulers
+        scheduler_plateau.step(current_val_acc)
+        scheduler_cosine.step(epoch)
         new_lr = decoder_optimizer.param_groups[0]['lr']
         
         if new_lr < current_lr:
@@ -231,4 +231,22 @@ def main():
     print("="*80)
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='Train Image Captioning Model')
+    parser.add_argument('--data_folder', default='data/processed', help='Folder with processed data')
+    parser.add_argument('--checkpoint', default=None, help='Path to checkpoint to resume training')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--workers', type=int, default=4, help='Number of data loading workers')
+    parser.add_argument('--fine_tune_encoder', action='store_true', help='Fine-tune encoder')
+    parser.add_argument('--encoder_lr', type=float, default=1e-5, help='Encoder learning rate')
+    parser.add_argument('--decoder_lr', type=float, default=5e-4, help='Decoder learning rate (increased)')
+    parser.add_argument('--epochs', type=int, default=60, help='Number of epochs (increased)')
+    parser.add_argument('--patience', type=int, default=20, help='Early stopping patience (increased)')
+    parser.add_argument('--alpha_c', type=float, default=1.0, help='Doubly stochastic attention regularization')
+    parser.add_argument('--grad_clip', type=float, default=5.0, help='Gradient clipping threshold')
+    parser.add_argument('--embed_dim', type=int, default=512, help='Embedding dimension')
+    parser.add_argument('--attention_dim', type=int, default=512, help='Attention dimension')
+    parser.add_argument('--decoder_dim', type=int, default=512, help='Decoder LSTM dimension')
+    parser.add_argument('--dropout', type=float, default=0.5, help='Dropout rate')
+    
+    args = parser.parse_args()
+    main(args)

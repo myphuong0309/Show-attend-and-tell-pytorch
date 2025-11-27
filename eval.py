@@ -9,30 +9,27 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import json
 import os
+import argparse
 
-## Configuration
-data_folder = 'data/processed'  # folder with processed data
-checkpoint_file = 'outputs/checkpoints/BEST_checkpoint_flickr8k.pth.tar'
-word_map_file = os.path.join(data_folder, 'word2idx.json')  
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-beam_size = 3  # Balanced speed/quality tradeoff
-
-def evaluate(beam_size):
+def evaluate(args):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
     print("="*80)
     print("MODEL EVALUATION ON TEST SET")
     print("="*80)
-    print(f"\nLoading checkpoint: {checkpoint_file}")
+    print(f"\nLoading checkpoint: {args.checkpoint}")
     
-    checkpoint = torch.load(checkpoint_file, map_location=device, weights_only=False)
+    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     encoder = checkpoint['encoder'].to(device)
     decoder = checkpoint['decoder'].to(device)
     encoder.eval()
     decoder.eval()
     
     print(f"Device: {device}")
-    print(f"Beam Size: {beam_size}\n")
+    print(f"Beam Size: {args.beam_size}\n")
     
-    with open(word_map_file, 'r') as j:
+    with open(args.word_map, 'r') as j:
         word_map = json.load(j)
     rev_word_map = {v: k for k, v in word_map.items()}
     vocab_size = len(word_map)
@@ -40,7 +37,7 @@ def evaluate(beam_size):
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     
     test_loader = torch.utils.data.DataLoader(
-        dataset=FlickrDataset(data_folder, 'test', word_map, transform=transforms.Compose([
+        dataset=FlickrDataset(args.data_folder, 'test', word_map, transform=transforms.Compose([
             transforms.Resize((256, 256)),
             transforms.ToTensor(),
             normalize,
@@ -58,7 +55,7 @@ def evaluate(beam_size):
         for i, (image, caps, caplens) in enumerate(tqdm(test_loader)):
             image = image.to(device)
             
-            k = beam_size
+            k = args.beam_size
             
             encoder_out = encoder(image)  # (1, 14, 14, 512)
             
@@ -86,7 +83,13 @@ def evaluate(beam_size):
                 awe = gate * awe
                 
                 h, c = decoder.lstm(torch.cat([embeddings, awe], dim=1), (h, c))
-                scores = decoder.fc(h)
+                
+                # Match the decoder's deeper output architecture
+                h_norm = decoder.layer_norm1(h)
+                out = decoder.fc1(h_norm)
+                out = decoder.layer_norm2(out)
+                out = decoder.relu(out)
+                scores = decoder.fc2(out)
                 scores = F.log_softmax(scores, dim=1)
                 scores = top_k_scores.expand_as(scores) + scores
                 
@@ -153,4 +156,12 @@ def evaluate(beam_size):
     print(f"\\n")
     
 if __name__ == '__main__':
-    evaluate(beam_size)
+    parser = argparse.ArgumentParser(description='Evaluate Image Captioning Model')
+    parser.add_argument('--data_folder', default='data/processed', help='Folder with processed data')
+    parser.add_argument('--checkpoint', default='outputs/checkpoints/BEST_checkpoint_flickr8k.pth.tar', 
+                       help='Path to checkpoint')
+    parser.add_argument('--word_map', default='data/processed/word2idx.json', help='Path to word map JSON')
+    parser.add_argument('--beam_size', type=int, default=3, help='Beam size for beam search')
+    
+    args = parser.parse_args()
+    evaluate(args)

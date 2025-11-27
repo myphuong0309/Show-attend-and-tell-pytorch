@@ -5,23 +5,28 @@ import torchvision.models as models
 class Encoder(nn.Module):
     def __init__(self, encoded_image_size=14, fine_tune=False):
         super(Encoder, self).__init__()
-        vgg19 = models.vgg19(weights=models.VGG19_Weights.IMAGENET1K_V1)
-        self.features = vgg19.features  
+        # Use ResNet152 for better feature extraction
+        resnet = models.resnet152(weights=models.ResNet152_Weights.IMAGENET1K_V1)
+        # Remove the last two layers (avgpool and fc)
+        modules = list(resnet.children())[:-2]
+        self.resnet = nn.Sequential(*modules)
         self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
-        self.encoder_dim = 512
+        self.encoder_dim = 2048  # ResNet152 outputs 2048 channels
         self.fine_tune(fine_tune)
             
     def forward(self, images):
-        out = self.features(images) 
+        out = self.resnet(images)
         out = self.adaptive_pool(out) 
         out = out.permute(0, 2, 3, 1) 
-        return out # (batch, 14, 14, 512)
+        return out # (batch, 14, 14, 2048)
     
     def fine_tune(self, fine_tune=True):
-        for p in self.features.parameters():
+        # Freeze all layers initially
+        for p in self.resnet.parameters():
             p.requires_grad = False
+        # Fine-tune only the last residual block if enabled
         if fine_tune:
-            for c in list(self.features.children())[28:]:
+            for c in list(self.resnet.children())[7:]:  # Last block of ResNet152
                 for p in c.parameters():
                     p.requires_grad = True
     
@@ -48,10 +53,9 @@ class Attention(nn.Module):
         return attention_weighted_encoding, alpha
 
 class Decoder(nn.Module):
-    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=512, dropout=0.5):
+    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5):
         super(Decoder, self).__init__()
         self.encoder_dim = encoder_dim
-        self.attention_dim = attention_dim
         self.embed_dim = embed_dim
         self.decoder_dim = decoder_dim
         self.vocab_size = vocab_size
@@ -67,17 +71,21 @@ class Decoder(nn.Module):
         self.f_beta = nn.Linear(decoder_dim, encoder_dim)
         self.sigmoid = nn.Sigmoid()
         
-        # Add layer normalization for better training stability
-        self.layer_norm = nn.LayerNorm(decoder_dim)
+        # Deeper output layers for better prediction
+        self.layer_norm1 = nn.LayerNorm(decoder_dim)
+        self.fc1 = nn.Linear(decoder_dim, decoder_dim // 2)
+        self.layer_norm2 = nn.LayerNorm(decoder_dim // 2)
+        self.fc2 = nn.Linear(decoder_dim // 2, vocab_size)
+        self.relu = nn.ReLU()
         
-        self.fc = nn.Linear(decoder_dim, vocab_size)
         self.init_weights()
         
     def init_weights(self):
         """Initialize embedding and output layer with careful initialization"""
         self.embedding.weight.data.uniform_(-0.1, 0.1)
-        self.fc.bias.data.fill_(0)
-        self.fc.weight.data.uniform_(-0.1, 0.1)
+        self.fc2.bias.data.fill_(0)
+        self.fc2.weight.data.uniform_(-0.1, 0.1)
+        self.fc1.weight.data.uniform_(-0.1, 0.1)
         
         # Initialize LSTM transformation layers with Xavier
         nn.init.xavier_uniform_(self.init_h.weight)
@@ -108,8 +116,8 @@ class Decoder(nn.Module):
         encoder_out = encoder_out[sort_ind]
         encoded_captions = encoded_captions[sort_ind]
 
-        # Embedding
-        embeddings = self.embedding(encoded_captions) # (batch, max_len, embed_dim)
+        # Embedding with dropout for regularization
+        embeddings = self.dropout_layer(self.embedding(encoded_captions)) # (batch, max_len, embed_dim)
 
         # Init LSTM
         h, c = self.init_hidden_state(encoder_out)
@@ -136,9 +144,12 @@ class Decoder(nn.Module):
             lstm_input = torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1)
             h, c = self.lstm(lstm_input, (h[:batch_size_t], c[:batch_size_t]))
             
-            # Apply layer normalization before final classification
-            h_norm = self.layer_norm(h)
-            preds = self.fc(self.dropout_layer(h_norm))
+            # Deeper output processing with layer normalization
+            h_norm = self.layer_norm1(h)
+            out = self.fc1(self.dropout_layer(h_norm))
+            out = self.layer_norm2(out)
+            out = self.relu(out)
+            preds = self.fc2(self.dropout_layer(out))
             
             predictions[:batch_size_t, t, :] = preds
             alphas[:batch_size_t, t, :] = alpha
