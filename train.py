@@ -212,7 +212,7 @@ def main(args):
         new_lr = decoder_optimizer.param_groups[0]['lr']
         
         if new_lr < current_lr:
-            print(f"   📉 Learning rate reduced: {current_lr:.2e} → {new_lr:.2e}")
+            print(f"   Learning rate reduced: {current_lr:.2e} → {new_lr:.2e}")
         
         is_best = current_val_acc > best_acc
         if is_best:
