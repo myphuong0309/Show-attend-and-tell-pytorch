@@ -106,11 +106,11 @@ class Decoder(nn.Module):
         prev_words = None
         for t in range(max(decode_lengths)):
             batch_size_t = sum([l > t for l in decode_lengths])
-            if self.training and t > 0 and self.ss_prob > 0:
+            if self.training and t > 0 and self.ss_prob > 0 and prev_words is not None:
                 use_sampling = torch.rand(batch_size_t).to(encoder_out.device) < self.ss_prob
-                if prev_words is not None and use_sampling.any():
+                if use_sampling.any():
                     current_words = encoded_captions[:batch_size_t, t].clone()
-                    current_words[use_sampling] = prev_words[use_sampling]
+                    current_words[use_sampling] = prev_words[:batch_size_t][use_sampling]
                     embedding_t = self.dropout_layer(self.embedding(current_words))
                 else:
                     embedding_t = embeddings[:batch_size_t, t, :]

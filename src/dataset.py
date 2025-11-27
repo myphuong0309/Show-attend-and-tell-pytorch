@@ -5,6 +5,7 @@ import json
 import random
 from PIL import Image
 import torchvision.transforms as transforms
+
 class FlickrDataset(Dataset):
     def __init__(self, data_folder, split, word2idx, transform=None):
         self.split = split

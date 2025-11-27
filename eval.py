@@ -141,7 +141,6 @@ def evaluate(args):
     print(f"   BLEU-3: {bleu3:.4f} ({bleu3*100:6.2f}%)")
     print(f"   BLEU-4: {bleu4:.4f} ({bleu4*100:6.2f}%) ← Primary Metric")
     print(f"{'='*80}\n")
-    print(f"\\n")
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluate Image Captioning Model')
