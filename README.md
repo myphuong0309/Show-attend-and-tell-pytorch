@@ -9,45 +9,34 @@ This project implements an encoder-decoder architecture with attention mechanism
 - **Decoder**: LSTM with soft attention and scheduled sampling to generate captions word-by-word
 - **Attention**: Soft attention with gating mechanism to focus on relevant image regions
 
-## Key Features
-
-- **Advanced Architecture**: ResNet-152 encoder with 2-layer decoder output (512→256→vocab)
-- **Scheduled Sampling**: Gradually transitions from teacher forcing to model predictions (0→50% over epochs 5-25)
-- **Enhanced Training**: Dual learning rate schedulers, label smoothing, gradient clipping
-- **Data Augmentation**: ColorJitter, RandomRotation, RandomHorizontalFlip for improved generalization
-- **Beam Search**: Configurable beam search for inference with attention visualization
-- **Early Stopping**: Patience-based early stopping to prevent overfitting
-- **Command-Line Arguments**: Fully configurable training, evaluation, and preprocessing via argparse
-- **Automated Pipeline**: One-command execution from data processing to evaluation
-
 ## Project Structure
 
 ```
 .
 ├── data/
-│   ├── images/              # Place your images here
-│   ├── captions.txt         # Image-caption pairs
+│   ├── images/              # Raw Flickr8k images (8091 images)
+│   ├── captions.txt         # Image-caption pairs (5 captions per image)
 │   └── processed/           # Processed data (auto-generated)
+│       ├── train_data.json  # Training set (~6472 images)
+│       ├── val_data.json    # Validation set (~809 images)
+│       ├── test_data.json   # Test set (~810 images)
+│       └── word2idx.json    # Vocabulary (3000+ words + special tokens)
 ├── outputs/
-│   ├── checkpoints/         # Model checkpoints
-│   └── attention_maps/      # Attention visualizations
+│   └── checkpoints/         # Model checkpoints
+│       ├── checkpoint_flickr8k.pth.tar        # Latest
+│       └── BEST_checkpoint_flickr8k.pth.tar   # Best validation
 ├── src/
-│   ├── model.py            # Encoder, Decoder, Attention modules
-│   ├── dataset.py          # PyTorch Dataset and DataLoader
-│   └── utils.py            # Helper functions
-├── process_input.py        # Data preprocessing
-├── train.py               # Training script
-├── eval.py                # Evaluation (BLEU score)
-├── inference.py           # Generate captions for new images
-├── run_pipeline.sh        # Automated pipeline
-└── requirements.txt       # Dependencies
+│   ├── model.py            # Encoder (ResNet-152), Attention, Decoder
+│   ├── dataset.py          # FlickrDataset, CaptionCollate
+│   └── utils.py            # Training utilities, metrics
+├── process_input.py        # Data preprocessing with argparse
+├── train.py               # Training script with argparse
+├── eval.py                # BLEU evaluation with argparse
+├── run_pipeline.sh        # Automated pipeline script
+└── requirements.txt       # Python dependencies
 ```
 
 ## Installation
-
-### Prerequisites
-- Python 3.8+
-- CUDA-enabled GPU (recommended)
 
 ### Setup
 
@@ -76,7 +65,7 @@ pip install -r requirements.txt
    - Images: [Flickr8k Dataset](https://www.kaggle.com/datasets/adityajn105/flickr8k)
    - Captions: Included in the dataset
 
-2. Organize your data:
+2. Organize the data:
 ```
 data/
 ├── images/           # Put all images here
@@ -101,12 +90,6 @@ Run the complete pipeline (preprocessing → training → evaluation → inferen
 chmod +x run_pipeline.sh
 ./run_pipeline.sh
 ```
-
-This will:
-1. Process the dataset
-2. Train the model
-3. Evaluate on test set (BLEU-4)
-4. Generate a sample caption with attention visualization
 
 ### Step-by-Step Usage
 
@@ -153,7 +136,7 @@ python train.py --data_folder data/processed \
                 --grad_clip 5.0
 ```
 
-**Key Arguments:**
+**Arguments:**
 - `--data_folder`: Path to processed data (default: `data/processed`)
 - `--checkpoint`: Resume from checkpoint (default: None)
 - `--batch_size`: Batch size (default: 32)
@@ -254,33 +237,6 @@ The model shows progressive improvement through training optimizations:
 
 Training metrics are logged every 50 batches showing loss and Top-5 accuracy.
 
-## Project Structure Details
-
-```
-.
-├── data/
-│   ├── images/              # Raw Flickr8k images (8091 images)
-│   ├── captions.txt         # Image-caption pairs (5 captions per image)
-│   └── processed/           # Processed data (auto-generated)
-│       ├── train_data.json  # Training set (~6472 images)
-│       ├── val_data.json    # Validation set (~809 images)
-│       ├── test_data.json   # Test set (~810 images)
-│       └── word2idx.json    # Vocabulary (3000+ words + special tokens)
-├── outputs/
-│   └── checkpoints/         # Model checkpoints
-│       ├── checkpoint_flickr8k.pth.tar        # Latest
-│       └── BEST_checkpoint_flickr8k.pth.tar   # Best validation
-├── src/
-│   ├── model.py            # Encoder (ResNet-152), Attention, Decoder
-│   ├── dataset.py          # FlickrDataset, CaptionCollate
-│   └── utils.py            # Training utilities, metrics
-├── process_input.py        # Data preprocessing with argparse
-├── train.py               # Training script with argparse
-├── eval.py                # BLEU evaluation with argparse
-├── run_pipeline.sh        # Automated pipeline script
-└── requirements.txt       # Python dependencies
-```
-
 ## Model Architecture
 
 ### Encoder (ResNet-152)
@@ -304,54 +260,6 @@ Training metrics are logged every 50 batches showing loss and Top-5 accuracy.
 - Dropout on embeddings (0.5) and intermediate layers
 - Scheduled sampling to reduce exposure bias
 - Hidden/cell states initialized from mean image features
-
-## Technical Specifications
-
-### Requirements
-```
-torch>=2.0.0
-torchvision>=0.15.0
-scikit-image
-matplotlib
-numpy
-tqdm
-nltk
-pillow
-```
-
-### Hardware Recommendations
-- **Minimum**: CUDA-enabled GPU with 6GB+ VRAM
-- **Recommended**: CUDA-enabled GPU with 8GB+ VRAM (e.g., RTX 3070, V100)
-- **CPU Training**: Possible but significantly slower
-- **RAM**: 16GB+ recommended for data loading
-
-### Typical Training Time
-- **Per Epoch**: ~5-10 minutes (GPU), ~1-2 hours (CPU)
-- **Full Training** (60 epochs): ~5-10 hours (GPU)
-- **Evaluation**: ~1-2 minutes on test set
-
-## Troubleshooting
-
-### Common Issues
-
-1. **CUDA Out of Memory**
-   - Reduce `--batch_size` to 16 or 8
-   - Reduce `--workers` to 1 or 2
-   - Ensure no other GPU processes are running
-
-2. **Low BLEU Scores Initially**
-   - Normal in early epochs (first 5-10 epochs)
-   - Scheduled sampling activates after epoch 5
-   - Best results typically appear after epoch 20-30
-
-3. **Training Not Improving**
-   - Check if learning rate is too low (monitor LR scheduler output)
-   - Try resuming from checkpoint with `--checkpoint`
-   - Verify data preprocessing completed correctly
-
-4. **Vocabulary Issues**
-   - Adjust `--min_word_freq` in preprocessing (lower = larger vocab)
-   - Ensure `captions.txt` format is correct
 
 ## References
 
